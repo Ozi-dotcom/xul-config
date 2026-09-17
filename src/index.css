@@ -189,6 +189,10 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "ss01", "tnum";
+    /* Butter-smooth theme switch: every themed property eases together */
+    transition:
+      background-color 0.5s ease,
+      color 0.5s ease;
   }
   .dark body {
     color-scheme: dark;
