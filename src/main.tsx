@@ -10,9 +10,8 @@ import { BrowserRouter, Route, Routes, useLocation } from "react-router";
 import "./index.css";
 
 // Lazy load route components for better code splitting
-const Landing = lazy(() => import("./pages/Landing.tsx"));
-const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const Studio = lazy(() => import("./pages/Studio.tsx"));
+const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
@@ -120,11 +119,10 @@ createRoot(document.getElementById("root")!).render(
           <RouteSyncer />
           <Suspense fallback={<RouteLoading />}>
             <Routes>
-              <Route path="/" element={<Landing />} />
-              <Route path="/studio" element={<Studio />} />
+              <Route path="/" element={<Studio />} />
               <Route
                 path="/auth"
-                element={<AuthPage redirectAfterAuth="/studio" />}
+                element={<AuthPage redirectAfterAuth="/" />}
               />
               <Route
                 path="/dashboard"

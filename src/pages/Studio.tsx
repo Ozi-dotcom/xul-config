@@ -1,27 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router";
 import { motion } from "framer-motion";
 import {
-  AlertTriangle,
-  ArrowDownToDot,
   Cable,
   Check,
   Loader2,
+  Moon,
   RotateCcw,
   SlidersVertical,
+  Sun,
+  TriangleAlert,
   Unplug,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 
 const CC_MIN = 0;
 const CC_MAX = 127;
 const BAUD_RATE = 9600;
+/* Track geometry: 0.75rem padding top/bottom (12px), knob is 2.25rem (36px) tall,
+   so the knob's *center* can travel between 12+18=30px and H-30px. */
+const PAD = 0.75;
+const KNOB_HALF = 1.125;
+const TRAVEL = 2 * (PAD + KNOB_HALF); // total px (rem) unavailable to knob centers
 
-/** Vertical fader: drag the knob or click the track. Mirrors XUL-config. */
+type SendState = "idle" | "sending" | "sent";
+
+/** Vertical glass fader: drag the knob, click the track, arrow keys, or type a value. */
 function Fader({
   channel,
   value,
@@ -34,20 +40,24 @@ function Fader({
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
 
-  const clamp = useCallback(
+  const setFromClientY = useCallback(
     (clientY: number) => {
       const track = trackRef.current;
       if (!track) return;
       const rect = track.getBoundingClientRect();
-      const y = Math.min(Math.max(clientY - rect.top, 0), rect.height);
-      onChange(Math.round((1 - y / rect.height) * CC_MAX));
+      // Knob center from 30px (top, value=127) to rect.height-30px (bottom, value=0)
+      const minCenter = PAD + KNOB_HALF; // 30px in rem->px terms handled below
+      const maxCenter = rect.height - minCenter;
+      const center = Math.min(Math.max(clientY - rect.top, minCenter), maxCenter);
+      const ratio = 1 - (center - minCenter) / (maxCenter - minCenter);
+      onChange(Math.round(ratio * CC_MAX));
     },
     [onChange],
   );
 
   useEffect(() => {
     if (!dragging) return;
-    const move = (e: MouseEvent) => clamp(e.clientY);
+    const move = (e: MouseEvent) => setFromClientY(e.clientY);
     const up = () => setDragging(false);
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
@@ -55,80 +65,116 @@ function Fader({
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
     };
-  }, [dragging, clamp]);
+  }, [dragging, setFromClientY]);
+
+  const ratio = value / CC_MAX;
 
   return (
     <div className="flex flex-1 flex-col items-center gap-3">
-      <span className="text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
-        CC {channel + 1}
+      <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+        Fader {channel + 1}
       </span>
 
-      {/* Track + thumb, vertical like a MIDI fader */}
+      {/* Track + knob, vertical like a MIDI fader */}
       <div
         ref={trackRef}
         onMouseDown={(e) => {
           e.preventDefault();
           setDragging(true);
-          clamp(e.clientY);
+          setFromClientY(e.clientY);
         }}
-        className="glass relative h-64 w-14 touch-none rounded-full select-none sm:h-80"
+        className="glass glass-edge relative h-64 w-16 touch-none rounded-full select-none sm:h-80"
         style={{ cursor: dragging ? "grabbing" : "pointer" }}
       >
         {/* Slot */}
         <div className="absolute top-3 bottom-3 left-1/2 w-1.5 -translate-x-1/2 rounded-full bg-foreground/10 shadow-inner" />
-        {/* Fill below the thumb, up to knob center */}
+        {/* Fill: bottom of track to knob center */}
         <div
-          className="absolute right-1/2 bottom-3 w-1.5 translate-x-1/2 rounded-full bg-gradient-to-t from-primary/70 to-chart-2/80"
+          className="absolute right-1/2 bottom-3 w-1.5 translate-x-1/2 rounded-full bg-gradient-to-t from-primary/70 to-chart-2/80 transition-[height] duration-75"
           style={{
-            height: `calc(1.125rem + ${(value / CC_MAX) * 100}% - ${(value / CC_MAX) * 3.75}rem)`,
+            height: `calc(${KNOB_HALF}rem + ${ratio} * (100% - ${TRAVEL}rem))`,
           }}
         />
-        {/* Thumb */}
+        {/* Knob */}
         <div
           role="slider"
-          aria-label={`Fader CC ${channel + 1}`}
+          aria-label={`Fader ${channel + 1}`}
           aria-valuemin={CC_MIN}
           aria-valuemax={CC_MAX}
           aria-valuenow={value}
           tabIndex={0}
           onKeyDown={(e) => {
-            if (e.key === "ArrowUp")
+            if (e.key === "ArrowUp" || e.key === "ArrowRight") {
+              e.preventDefault();
               onChange(Math.min(CC_MAX, value + 1));
-            if (e.key === "ArrowDown")
+            }
+            if (e.key === "ArrowDown" || e.key === "ArrowLeft") {
+              e.preventDefault();
               onChange(Math.max(CC_MIN, value - 1));
+            }
           }}
-          className={`absolute left-1/2 flex h-9 w-12 -translate-x-1/2 items-center justify-center rounded-lg glass-strong glass-edge-strong fader-grip transition-[top] duration-75 ${
-            dragging ? "" : "transition-transform hover:scale-105"
+          className={`absolute left-1/2 flex h-9 w-12 -translate-x-1/2 items-center justify-center rounded-xl glass-strong glass-edge-strong fader-grip ${
+            dragging ? "cursor-grabbing scale-105" : "cursor-grab"
           }`}
           style={{
-            top: `calc(0.75rem + ${1 - value / CC_MAX} * (100% - 3.75rem))`,
+            top: `calc(${PAD}rem + ${1 - ratio} * (100% - ${TRAVEL}rem))`,
           }}
         >
           <div className="h-4 w-8 rounded-sm bg-foreground/70" />
         </div>
       </div>
 
-      <div className="flex flex-col items-center gap-1">
-        <Input
-          type="number"
-          min={CC_MIN}
-          max={CC_MAX}
-          value={value}
-          onChange={(e) => {
-            const n = parseInt(e.target.value, 10);
-            if (!Number.isNaN(n)) onChange(Math.min(CC_MAX, Math.max(CC_MIN, n)));
-            else if (e.target.value === "") onChange(0);
-          }}
-          className="glass w-20 rounded-xl border-white/60 text-center font-semibold tabular-nums"
-          aria-label={`CC ${channel + 1} value`}
-        />
-        <span className="text-[10px] text-muted-foreground">0 – 127</span>
-      </div>
+      <Input
+        type="number"
+        min={CC_MIN}
+        max={CC_MAX}
+        value={value}
+        onChange={(e) => {
+          const raw = e.target.value;
+          if (raw === "") {
+            onChange(0);
+            return;
+          }
+          const n = Number.parseInt(raw, 10);
+          if (!Number.isNaN(n)) {
+            onChange(Math.min(CC_MAX, Math.max(CC_MIN, n)));
+          }
+        }}
+        className="glass w-20 rounded-xl border-white/60 text-center font-semibold tabular-nums"
+        aria-label={`Fader ${channel + 1} CC value`}
+      />
     </div>
   );
 }
 
-type SendState = "idle" | "sending" | "sent";
+/** Light/dark glass theme switch, persisted in localStorage. */
+function ThemeToggle() {
+  const [dark, setDark] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return (
+      localStorage.getItem("xul-theme") === "dark" ||
+      (localStorage.getItem("xul-theme") === null &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches)
+    );
+  });
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", dark);
+    localStorage.setItem("xul-theme", dark ? "dark" : "light");
+  }, [dark]);
+
+  return (
+    <Button
+      variant="outline"
+      size="icon"
+      onClick={() => setDark((d) => !d)}
+      className="glass rounded-xl"
+      aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+    >
+      {dark ? <Sun className="size-4.5" /> : <Moon className="size-4.5" />}
+    </Button>
+  );
+}
 
 export default function Studio() {
   const [cc, setCc] = useState([64, 64, 64]);
@@ -136,7 +182,9 @@ export default function Studio() {
   const [serialSupported, setSerialSupported] = useState(true);
 
   useEffect(() => {
-    setSerialSupported(typeof navigator !== "undefined" && "serial" in navigator);
+    setSerialSupported(
+      typeof navigator !== "undefined" && "serial" in navigator,
+    );
   }, []);
 
   const setChannel = useCallback((index: number, v: number) => {
@@ -144,7 +192,7 @@ export default function Studio() {
   }, []);
 
   const payload = useMemo(
-    () => JSON.stringify({ cc: cc.map((v) => v) }),
+    () => JSON.stringify({ cc: [...cc] }),
     [cc],
   );
 
@@ -159,18 +207,24 @@ export default function Studio() {
       writer.releaseLock();
       await port.close();
       setSendState("sent");
-      toast.success("Configuration sent to X.U.L");
+      toast.success("Settings sent to the controller");
       setTimeout(() => setSendState("idle"), 2000);
+      setCc([0, 0, 0]);
     } catch (error) {
       setSendState("idle");
       toast.error(
-        "Failed to connect — make sure the controller is plugged in and try again.",
-        { description: error instanceof Error ? error.message : undefined },
+        "Couldn't reach the controller — make sure it's plugged in and try again.",
+        {
+          description:
+            error instanceof Error ? error.message : undefined,
+        },
       );
     }
   }, [payload, sendState]);
 
   const handleReset = useCallback(() => setCc([0, 0, 0]), []);
+
+  const sent = sendState === "sent";
 
   return (
     <div className="glass-backdrop flex min-h-screen flex-col">
@@ -183,15 +237,15 @@ export default function Studio() {
           className="glass glass-edge flex flex-wrap items-center justify-between gap-4 rounded-2xl px-5 py-4"
         >
           <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/12 text-primary ring-1 ring-white/50">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/12 text-primary ring-1 ring-white/50 dark:ring-white/15">
               <SlidersVertical className="size-5" />
             </div>
             <div>
               <h1 className="text-base font-semibold tracking-tight">
-                X.U.L Config
+                XUL Config
               </h1>
               <p className="text-xs text-muted-foreground">
-                Three fader channels · JSON over serial
+                Three faders · MIDI CC over USB
               </p>
             </div>
           </div>
@@ -212,9 +266,7 @@ export default function Studio() {
                 </>
               )}
             </Badge>
-            <Button variant="outline" size="sm" asChild className="glass rounded-xl">
-              <Link to="/">Home</Link>
-            </Button>
+            <ThemeToggle />
           </div>
         </motion.header>
 
@@ -231,7 +283,7 @@ export default function Studio() {
                 Fader deck
               </h2>
               <p className="text-xs text-muted-foreground">
-                Drag the knobs or type a value — positions stay in sync.
+                Drag a knob, click the track, or type a value from 0 to 127.
               </p>
             </div>
             <Button
@@ -240,7 +292,7 @@ export default function Studio() {
               onClick={handleReset}
               className="glass gap-1.5 rounded-xl"
             >
-              <RotateCcw className="size-3.5" /> Zero all
+              <RotateCcw className="size-3.5" /> Reset
             </Button>
           </div>
 
@@ -255,24 +307,11 @@ export default function Studio() {
             ))}
           </div>
 
-          {/* Payload preview */}
-          <div className="mt-8 rounded-2xl border border-white/60 bg-white/35 px-5 py-4">
-            <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
-              <ArrowDownToDot className="size-3.5" /> Serial payload
-            </div>
-            <code className="text-sm font-semibold text-glass tabular-nums">
-              {payload}
-            </code>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Sent as text at {BAUD_RATE} baud.
-            </p>
-          </div>
-
           {/* Send */}
-          <div className="mt-6 flex flex-col items-center gap-3">
+          <div className="mt-8 flex flex-col items-center gap-3">
             <Button
               size="lg"
-              className="h-13 w-full max-w-sm rounded-2xl text-base shadow-xl shadow-primary/25"
+              className="h-12 w-full max-w-sm rounded-2xl text-base shadow-xl shadow-primary/25"
               disabled={!serialSupported || sendState === "sending"}
               onClick={handleSend}
             >
@@ -280,29 +319,29 @@ export default function Studio() {
                 <>
                   <Loader2 className="size-4.5 animate-spin" /> Sending…
                 </>
-              ) : sendState === "sent" ? (
+              ) : sent ? (
                 <>
                   <Check className="size-4.5" /> Sent
                 </>
               ) : (
                 <>
-                  <Cable className="size-4.5" /> Send to X.U.L
+                  <Cable className="size-4.5" /> Send to controller
                 </>
               )}
             </Button>
 
             {!serialSupported && (
               <p className="glass flex items-center gap-2 rounded-xl px-4 py-2 text-center text-xs font-medium text-destructive">
-                <AlertTriangle className="size-3.5 shrink-0" />
-                Web Serial API is not supported in this browser. Please use
-                desktop Chrome, Edge or Opera.
+                <TriangleAlert className="size-3.5 shrink-0" />
+                This browser doesn't support Web Serial. Please use desktop
+                Chrome, Edge or Opera.
               </p>
             )}
           </div>
         </motion.section>
 
         <footer className="mt-8 pb-4 text-center text-xs text-muted-foreground">
-          Opens a serial port at 9600 baud, writes JSON, closes cleanly.
+          Sends your three CC values to the controller over USB — nothing else.
         </footer>
       </main>
     </div>
