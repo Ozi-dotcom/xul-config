@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   Cable,
   Check,
   Loader2,
   Moon,
-  RotateCcw,
   SlidersVertical,
   Sun,
   TriangleAlert,
@@ -88,9 +87,11 @@ function Fader({
       >
         {/* Slot */}
         <div className="absolute top-3 bottom-3 left-1/2 w-1.5 -translate-x-1/2 rounded-full bg-foreground/10 shadow-inner" />
-        {/* Fill: bottom of track to knob center */}
+        {/* Fill: bottom of track to knob center — eases when not dragging */}
         <div
-          className="absolute right-1/2 bottom-3 w-1.5 translate-x-1/2 rounded-full bg-gradient-to-t from-primary/70 to-chart-2/80 transition-[height] duration-75"
+          className={`absolute right-1/2 bottom-3 w-1.5 translate-x-1/2 rounded-full bg-gradient-to-t from-primary/70 to-chart-2/80 transition-[height] duration-200 ease-out ${
+            dragging ? "transition-none" : ""
+          }`}
           style={{
             height: `calc(${KNOB_HALF}rem + ${ratio} * (100% - ${TRAVEL}rem))`,
           }}
@@ -113,8 +114,8 @@ function Fader({
               onChange(Math.max(CC_MIN, value - 1));
             }
           }}
-          className={`absolute left-1/2 flex h-9 w-12 -translate-x-1/2 items-center justify-center rounded-xl glass-strong glass-edge-strong fader-grip ${
-            dragging ? "cursor-grabbing scale-105" : "cursor-grab"
+          className={`absolute left-1/2 flex h-9 w-12 -translate-x-1/2 items-center justify-center rounded-xl glass-strong glass-edge-strong fader-grip transition-[top] duration-200 ease-out ${
+            dragging ? "cursor-grabbing scale-105 transition-none" : "cursor-grab"
           }`}
           style={{
             top: `calc(${PAD}rem + ${1 - ratio} * (100% - ${TRAVEL}rem))`,
@@ -149,29 +150,42 @@ function Fader({
 
 /** Light/dark glass theme switch, persisted in localStorage. */
 function ThemeToggle() {
-  const [dark, setDark] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return (
-      localStorage.getItem("xul-theme") === "dark" ||
-      (localStorage.getItem("xul-theme") === null &&
-        window.matchMedia("(prefers-color-scheme: dark)").matches)
-    );
-  });
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
 
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-    localStorage.setItem("xul-theme", dark ? "dark" : "light");
+  const toggle = useCallback(() => {
+    const next = !dark;
+    setDark(next);
+    const root = document.documentElement;
+    root.classList.toggle("dark", next);
+    root.dataset.themeSwitching = "true";
+    localStorage.setItem("xul-theme", next ? "dark" : "light");
+    window.setTimeout(() => delete root.dataset.themeSwitching, 550);
   }, [dark]);
 
   return (
     <Button
       variant="outline"
       size="icon"
-      onClick={() => setDark((d) => !d)}
+      onClick={toggle}
       className="glass rounded-xl"
       aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
     >
-      {dark ? <Sun className="size-4.5" /> : <Moon className="size-4.5" />}
+      <AnimatePresence initial={false} mode="wait">
+        <motion.span
+          key={dark ? "sun" : "moon"}
+          initial={{ opacity: 0, rotate: -60, scale: 0.6 }}
+          animate={{ opacity: 1, rotate: 0, scale: 1 }}
+          exit={{ opacity: 0, rotate: 60, scale: 0.6 }}
+          transition={{ duration: 0.25, ease: "easeOut" }}
+          className="flex items-center justify-center"
+        >
+          {dark ? (
+            <Sun className="size-4.5" />
+          ) : (
+            <Moon className="size-4.5" />
+          )}
+        </motion.span>
+      </AnimatePresence>
     </Button>
   );
 }
@@ -209,7 +223,6 @@ export default function Studio() {
       setSendState("sent");
       toast.success("Settings sent to the controller");
       setTimeout(() => setSendState("idle"), 2000);
-      setCc([0, 0, 0]);
     } catch (error) {
       setSendState("idle");
       toast.error(
@@ -221,8 +234,6 @@ export default function Studio() {
       );
     }
   }, [payload, sendState]);
-
-  const handleReset = useCallback(() => setCc([0, 0, 0]), []);
 
   const sent = sendState === "sent";
 
@@ -277,23 +288,11 @@ export default function Studio() {
           transition={{ duration: 0.6, delay: 0.1 }}
           className="glass-strong glass-edge-strong mt-8 rounded-3xl p-6 sm:p-8"
         >
-          <div className="mb-6 flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-semibold tracking-tight">
-                Fader deck
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                Drag a knob, click the track, or type a value from 0 to 127.
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleReset}
-              className="glass gap-1.5 rounded-xl"
-            >
-              <RotateCcw className="size-3.5" /> Reset
-            </Button>
+          <div className="mb-6">
+            <h2 className="text-lg font-semibold tracking-tight">Fader deck</h2>
+            <p className="text-xs text-muted-foreground">
+              Drag a knob, click the track, or type a value from 0 to 127.
+            </p>
           </div>
 
           <div className="flex flex-col items-stretch gap-8 sm:flex-row">
