@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Cable,
@@ -26,7 +33,27 @@ const TRAVEL = 2 * (PAD + KNOB_HALF); // total px (rem) unavailable to knob cent
 
 type SendState = "idle" | "sending" | "sent";
 
-/** Vertical glass fader: drag the knob, click the track, arrow keys, or type a value. */
+/** Floating droplet blobs behind the glass — theme-aware via CSS vars. */
+const BLOBS = [
+  { pos: "left-[4%] top-[10%] size-44 sm:size-64", drift: "drift", v: "--blob-1" },
+  { pos: "right-[6%] top-[16%] size-36 sm:size-52", drift: "drift-b", v: "--blob-2" },
+  { pos: "bottom-[6%] left-[28%] size-52 sm:size-72", drift: "drift-c", v: "--blob-3" },
+  { pos: "bottom-[32%] right-[22%] size-28 sm:size-40", drift: "drift-b", v: "--blob-4" },
+] as const;
+
+function Blob({ pos, drift, v }: (typeof BLOBS)[number]) {
+  const style = {
+    "--blob-bg": `var(${v})`,
+    "--blob-shadow": `color-mix(in oklab, var(${v}) 45%, transparent)`,
+  } as CSSProperties;
+  return (
+    <div aria-hidden style={style} className={`blob ${drift} absolute ${pos}`}>
+      <span className="blob-spec" />
+    </div>
+  );
+}
+
+/** Vertical liquid-glass fader: drag the knob, click the track, arrow keys, or type a value. */
 function Fader({
   channel,
   value,
@@ -39,13 +66,20 @@ function Fader({
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
 
+  const accent = `--accent-${channel + 1}`;
+  const accentStyle = {
+    "--liquid": `var(${accent})`,
+    "--glow": `color-mix(in oklab, var(${accent}) 30%, transparent)`,
+    "--glow-strong": `color-mix(in oklab, var(${accent}) 55%, transparent)`,
+  } as CSSProperties;
+
   const setFromClientY = useCallback(
     (clientY: number) => {
       const track = trackRef.current;
       if (!track) return;
       const rect = track.getBoundingClientRect();
       // Knob center from 30px (top, value=127) to rect.height-30px (bottom, value=0)
-      const minCenter = PAD + KNOB_HALF; // 30px in rem->px terms handled below
+      const minCenter = PAD + KNOB_HALF;
       const maxCenter = rect.height - minCenter;
       const center = Math.min(Math.max(clientY - rect.top, minCenter), maxCenter);
       const ratio = 1 - (center - minCenter) / (maxCenter - minCenter);
@@ -82,21 +116,21 @@ function Fader({
           setDragging(true);
           setFromClientY(e.clientY);
         }}
+        style={accentStyle}
         className="glass glass-edge relative h-64 w-16 touch-none rounded-full select-none sm:h-80"
-        style={{ cursor: dragging ? "grabbing" : "pointer" }}
       >
         {/* Slot */}
         <div className="absolute top-3 bottom-3 left-1/2 w-1.5 -translate-x-1/2 rounded-full bg-foreground/10 shadow-inner" />
-        {/* Fill: bottom of track to knob center — eases when not dragging */}
+        {/* Liquid fill: bottom of track to knob center, with a breathing glow */}
         <div
-          className={`absolute right-1/2 bottom-3 w-1.5 translate-x-1/2 rounded-full bg-gradient-to-t from-primary/70 to-chart-2/80 transition-[height] duration-200 ease-out ${
-            dragging ? "transition-none" : ""
+          className={`liquid-fill absolute right-1/2 bottom-3 w-1.5 translate-x-1/2 rounded-full ${
+            dragging ? "transition-none" : "transition-[height] duration-200 ease-out"
           }`}
           style={{
             height: `calc(${KNOB_HALF}rem + ${ratio} * (100% - ${TRAVEL}rem))`,
           }}
         />
-        {/* Knob */}
+        {/* Glossy liquid knob */}
         <div
           role="slider"
           aria-label={`Fader ${channel + 1}`}
@@ -114,14 +148,14 @@ function Fader({
               onChange(Math.max(CC_MIN, value - 1));
             }
           }}
-          className={`absolute left-1/2 flex h-9 w-12 -translate-x-1/2 items-center justify-center rounded-xl glass-strong glass-edge-strong fader-grip transition-[top] duration-200 ease-out ${
-            dragging ? "cursor-grabbing scale-105 transition-none" : "cursor-grab"
-          }`}
+          className={`liquid-knob absolute left-1/2 flex h-9 w-12 -translate-x-1/2 items-center justify-center rounded-full shadow-[0_6px_18px_oklch(0.3_0.05_250/0.28)] ${
+            dragging ? "cursor-grabbing scale-105" : "cursor-grab"
+          } ${dragging ? "" : "transition-[top,transform] duration-200 ease-out"}`}
           style={{
             top: `calc(${PAD}rem + ${1 - ratio} * (100% - ${TRAVEL}rem))`,
           }}
         >
-          <div className="h-4 w-8 rounded-sm bg-foreground/70" />
+          <div className="relative z-10 h-1 w-7 rounded-full bg-foreground/45" />
         </div>
       </div>
 
@@ -141,52 +175,51 @@ function Fader({
             onChange(Math.min(CC_MAX, Math.max(CC_MIN, n)));
           }
         }}
-        className="glass w-20 rounded-xl border-white/60 text-center font-semibold tabular-nums"
+        style={accentStyle}
+        className="glass w-20 rounded-full border-white/60 text-center font-semibold tabular-nums focus-visible:ring-[color-mix(in_oklab,var(--accent-1)_50%,transparent)] dark:border-white/15"
         aria-label={`Fader ${channel + 1} CC value`}
       />
     </div>
   );
 }
 
-/** Light/dark glass theme switch, persisted in localStorage. */
+/** Light/dark liquid-glass theme switch, persisted in localStorage. */
 function ThemeToggle() {
-  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
+  const [dark, setDark] = useState(() =>
+    document.documentElement.classList.contains("dark"),
+  );
 
   const toggle = useCallback(() => {
     const next = !dark;
     setDark(next);
     const root = document.documentElement;
     root.classList.toggle("dark", next);
-    root.dataset.themeSwitching = "true";
     localStorage.setItem("xul-theme", next ? "dark" : "light");
-    window.setTimeout(() => delete root.dataset.themeSwitching, 550);
   }, [dark]);
 
   return (
-    <Button
-      variant="outline"
-      size="icon"
+    <motion.button
+      type="button"
       onClick={toggle}
-      className="glass rounded-xl"
+      whileHover={{ scale: 1.06 }}
+      whileTap={{ scale: 0.9 }}
+      transition={{ type: "spring", stiffness: 400, damping: 22 }}
+      className="glass glass-edge squish flex size-9 items-center justify-center rounded-full text-foreground"
       aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
     >
       <AnimatePresence initial={false} mode="wait">
         <motion.span
           key={dark ? "sun" : "moon"}
-          initial={{ opacity: 0, rotate: -60, scale: 0.6 }}
+          initial={{ opacity: 0, rotate: -90, scale: 0.5 }}
           animate={{ opacity: 1, rotate: 0, scale: 1 }}
-          exit={{ opacity: 0, rotate: 60, scale: 0.6 }}
-          transition={{ duration: 0.25, ease: "easeOut" }}
+          exit={{ opacity: 0, rotate: 90, scale: 0.5 }}
+          transition={{ type: "spring", stiffness: 300, damping: 20 }}
           className="flex items-center justify-center"
         >
-          {dark ? (
-            <Sun className="size-4.5" />
-          ) : (
-            <Moon className="size-4.5" />
-          )}
+          {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
         </motion.span>
       </AnimatePresence>
-    </Button>
+    </motion.button>
   );
 }
 
@@ -205,10 +238,7 @@ export default function Studio() {
     setCc((prev) => prev.map((c, i) => (i === index ? v : c)));
   }, []);
 
-  const payload = useMemo(
-    () => JSON.stringify({ cc: [...cc] }),
-    [cc],
-  );
+  const payload = useMemo(() => JSON.stringify({ cc: [...cc] }), [cc]);
 
   const handleSend = useCallback(async () => {
     if (sendState === "sending") return;
@@ -228,8 +258,7 @@ export default function Studio() {
       toast.error(
         "Couldn't reach the controller — make sure it's plugged in and try again.",
         {
-          description:
-            error instanceof Error ? error.message : undefined,
+          description: error instanceof Error ? error.message : undefined,
         },
       );
     }
@@ -238,17 +267,24 @@ export default function Studio() {
   const sent = sendState === "sent";
 
   return (
-    <div className="glass-backdrop flex min-h-screen flex-col">
-      <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-6 py-10">
+    <div className="glass-backdrop relative flex min-h-screen flex-col">
+      {/* Floating liquid droplets */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 z-0">
+        {BLOBS.map((b) => (
+          <Blob key={b.v} {...b} />
+        ))}
+      </div>
+
+      <main className="relative z-10 mx-auto flex w-full max-w-5xl flex-1 flex-col px-6 py-10">
         {/* Header */}
         <motion.header
-          initial={{ opacity: 0, y: -12 }}
+          initial={{ opacity: 0, y: -16 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
+          transition={{ type: "spring", stiffness: 120, damping: 18 }}
           className="glass glass-edge flex flex-wrap items-center justify-between gap-4 rounded-2xl px-5 py-4"
         >
           <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/12 text-primary ring-1 ring-white/50 dark:ring-white/15">
+            <div className="flex size-10 items-center justify-center rounded-2xl bg-primary/15 text-primary shadow-[0_0_18px_var(--glow)] ring-1 ring-white/60 dark:ring-white/15">
               <SlidersVertical className="size-5" />
             </div>
             <div>
@@ -283,9 +319,9 @@ export default function Studio() {
 
         {/* Fader deck */}
         <motion.section
-          initial={{ opacity: 0, y: 24 }}
+          initial={{ opacity: 0, y: 28 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.1 }}
+          transition={{ type: "spring", stiffness: 100, damping: 18, delay: 0.08 }}
           className="glass-strong glass-edge-strong mt-8 rounded-3xl p-6 sm:p-8"
         >
           <div className="mb-6">
@@ -308,29 +344,36 @@ export default function Studio() {
 
           {/* Send */}
           <div className="mt-8 flex flex-col items-center gap-3">
-            <Button
-              size="lg"
-              className="h-12 w-full max-w-sm rounded-2xl text-base shadow-xl shadow-primary/25"
-              disabled={!serialSupported || sendState === "sending"}
-              onClick={handleSend}
+            <motion.div
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.97 }}
+              transition={{ type: "spring", stiffness: 400, damping: 24 }}
+              className="w-full max-w-sm"
             >
-              {sendState === "sending" ? (
-                <>
-                  <Loader2 className="size-4.5 animate-spin" /> Sending…
-                </>
-              ) : sent ? (
-                <>
-                  <Check className="size-4.5" /> Sent
-                </>
-              ) : (
-                <>
-                  <Cable className="size-4.5" /> Send to controller
-                </>
-              )}
-            </Button>
+              <Button
+                size="lg"
+                className="h-12 w-full rounded-full border-0 text-base shadow-[0_10px_32px_var(--glow-strong),inset_0_1px_0_oklch(1_0_0/35%)] [background-image:linear-gradient(135deg,var(--primary),var(--chart-3))]"
+                disabled={!serialSupported || sendState === "sending"}
+                onClick={handleSend}
+              >
+                {sendState === "sending" ? (
+                  <>
+                    <Loader2 className="size-4.5 animate-spin" /> Sending…
+                  </>
+                ) : sent ? (
+                  <>
+                    <Check className="size-4.5" /> Sent
+                  </>
+                ) : (
+                  <>
+                    <Cable className="size-4.5" /> Send to controller
+                  </>
+                )}
+              </Button>
+            </motion.div>
 
             {!serialSupported && (
-              <p className="glass flex items-center gap-2 rounded-xl px-4 py-2 text-center text-xs font-medium text-destructive">
+              <p className="glass flex items-center gap-2 rounded-2xl px-4 py-2 text-center text-xs font-medium text-destructive">
                 <TriangleAlert className="size-3.5 shrink-0" />
                 This browser doesn't support Web Serial. Please use desktop
                 Chrome, Edge or Opera.
